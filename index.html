@@ -20,7 +20,6 @@
 .big-btn{width:100%;padding:18px;font-size:16px;font-weight:500;border-radius:12px;border:0.5px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;min-height:56px}
 .big-btn:active{transform:scale(0.97)}
 .big-btn.rec{background:rgba(226,75,74,0.2);border-color:rgba(226,75,74,0.4);color:#F7C1C1}
-.big-btn:disabled{opacity:.35;cursor:default}
 .timer{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:14px;color:#F09595;font-weight:500}
 .spd-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .spd-big{font-size:32px;font-weight:500;color:#CECBF6;line-height:1}
@@ -42,6 +41,8 @@ input[type=range]{width:100%;accent-color:#7F77DD;cursor:pointer}
 .share-btn{width:100%;padding:18px;font-size:16px;font-weight:500;border-radius:12px;border:0.5px solid rgba(29,158,117,0.4);background:rgba(29,158,117,0.12);color:#9FE1CB;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;min-height:56px}
 .share-btn:active{transform:scale(0.97)}
 .share-btn:disabled{opacity:.35;cursor:default}
+.prog-bar-wrap{height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:10px;overflow:hidden}
+.prog-bar-fill{height:4px;background:#9FE1CB;border-radius:2px;width:0%;transition:width 0.2s}
 .hint{font-size:12px;color:rgba(255,255,255,0.28);text-align:center;margin-top:10px}
 .hidden{display:none}
 </style>
@@ -51,7 +52,7 @@ input[type=range]{width:100%;accent-color:#7F77DD;cursor:pointer}
   <div class="hero">
     <div class="avatar" id="av"><i class="ti ti-microphone" id="avI" aria-hidden="true"></i></div>
     <h1>הקול של לינוי</h1>
-    <small>מהיר · קול רגיל · ללא צ׳יפמאנקס</small>
+    <small>מהיר · קול רגיל · שיתוף אמיתי</small>
     <div><span class="pill" id="pill"><span id="pillTxt">מוכן להקלטה</span></span></div>
   </div>
   <div class="body">
@@ -96,18 +97,20 @@ input[type=range]{width:100%;accent-color:#7F77DD;cursor:pointer}
         <i class="ti ti-share" style="font-size:20px" aria-hidden="true"></i>
         <span id="shareTxt">שתף הודעה קולית</span>
       </button>
+      <div class="prog-bar-wrap hidden" id="procWrap">
+        <div class="prog-bar-fill" id="procFill"></div>
+      </div>
       <p class="hint" id="hint">הקובץ ישמע בדיוק כמו כאן</p>
     </div>
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/soundtouchjs@0.1.30/dist/soundtouch.min.js"></script>
 <script>
-let mr,ch=[],rawBlob=null,decodedBuf=null,spd=1.70,sec=0,tk=null;
-let aud=null,raf=null,stNode=null,actx=null,playing=false,playPos=0,startTime=0;
+let mr,ch=[],rawBlob=null,decodedBuf=null,spd=1.70,sec=0,tk=null,aud=null,raf=null;
 
 const tl=s=>s<0.8?'איטי מאוד':s<1?'איטי':s===1?'רגיל':s<1.5?'מהיר קצת':s<2?'מהיר':s<2.5?'מהיר מאוד':'טורבו';
 const fmt=s=>{if(!isFinite(s)||s<0)return'0:00';return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');};
+const yield_=()=>new Promise(r=>setTimeout(r,0));
 
 function setPill(t,cls){
   const p=document.getElementById('pill');
@@ -154,114 +157,61 @@ function tick(){document.getElementById('tv').textContent=fmt(sec);sec++;}
 async function onStop(){
   rawBlob=new Blob(ch,{type:'audio/webm'});
   await new Promise(r=>setTimeout(r,300));
-  if(!actx)actx=new(window.AudioContext||window.webkitAudioContext)();
+  const ctx=new(window.AudioContext||window.webkitAudioContext)();
   const ab=await rawBlob.arrayBuffer();
-  decodedBuf=await actx.decodeAudioData(ab);
+  decodedBuf=await ctx.decodeAudioData(ab);
+  buildPlayer();
   document.getElementById('spdCard').classList.remove('hidden');
   document.getElementById('shareCard').classList.remove('hidden');
   setPill('מוכן לשליחה','done');
-  updProgStatic();
 }
 
-function updProgStatic(){
-  if(!decodedBuf)return;
-  const dur=decodedBuf.duration/spd;
-  document.getElementById('durT').textContent=fmt(dur);
-  document.getElementById('curT').textContent='0:00';
-  document.getElementById('pf').style.width='0%';
+function buildPlayer(){
+  if(aud){aud.pause();try{aud.remove();}catch(e){}}
+  aud=document.createElement('audio');
+  aud.src=URL.createObjectURL(rawBlob);
+  aud.preload='metadata';
+  applySpeed(aud);
+  document.body.appendChild(aud);
+  aud.addEventListener('timeupdate',updProg);
+  aud.addEventListener('loadedmetadata',updProg);
+  aud.addEventListener('ended',()=>{cancelAnimationFrame(raf);document.getElementById('playI').className='ti ti-player-play';});
+}
+
+function applySpeed(el){
+  el.playbackRate=spd;
+  if('preservesPitch' in el)el.preservesPitch=true;
+  else if('mozPreservesPitch' in el)el.mozPreservesPitch=true;
+  else if('webkitPreservesPitch' in el)el.webkitPreservesPitch=true;
 }
 
 function togglePlay(){
-  if(!decodedBuf)return;
-  if(playing){stopPlay();}
-  else{startPlay(playPos);}
+  if(!aud)return;
+  if(aud.paused){aud.play();document.getElementById('playI').className='ti ti-player-pause';loopP();}
+  else{aud.pause();document.getElementById('playI').className='ti ti-player-play';cancelAnimationFrame(raf);}
 }
 
-function stopPlay(){
-  if(stNode){try{stNode.disconnect();}catch(e){}}
-  stNode=null;playing=false;
-  cancelAnimationFrame(raf);
-  playPos=actx.currentTime-startTime;
-  document.getElementById('playI').className='ti ti-player-play';
-}
-
-function startPlay(fromSec){
-  if(!decodedBuf||!actx)return;
-  if(actx.state==='suspended')actx.resume();
-  if(stNode){try{stNode.disconnect();}catch(e){}}
-
-  const sr=decodedBuf.sampleRate;
-  const nc=decodedBuf.numberOfChannels;
-  const ns=decodedBuf.length;
-
-  const st=new SoundTouch();
-  st.tempo=spd;
-  st.pitch=1.0;
-
-  const channels=[];
-  for(let c=0;c<nc;c++) channels.push(decodedBuf.getChannelData(c));
-
-  const startSample=Math.floor(fromSec*sr*spd);
-  let pos=startSample;
-
-  const filter=new SimpleFilter({
-    extract(target,numFrames){
-      if(pos>=ns)return 0;
-      const n=Math.min(numFrames,ns-pos);
-      for(let i=0;i<n;i++){
-        target[i*2]=channels[0][pos+i];
-        target[i*2+1]=(nc>1?channels[1]:channels[0])[pos+i];
-      }
-      pos+=n;
-      return n;
-    }
-  },st);
-
-  const bufSize=4096;
-  const scriptNode=actx.createScriptProcessor(bufSize,0,2);
-  scriptNode.onaudioprocess=e=>{
-    const L=e.outputBuffer.getChannelData(0);
-    const R=e.outputBuffer.getChannelData(1);
-    const tmp=new Float32Array(bufSize*2);
-    const got=filter.extract(tmp,bufSize);
-    if(got===0){stopPlay();playPos=0;updProg();return;}
-    for(let i=0;i<bufSize;i++){L[i]=tmp[i*2];R[i]=tmp[i*2+1];}
-  };
-  scriptNode.connect(actx.destination);
-  stNode=scriptNode;
-  startTime=actx.currentTime-fromSec;
-  playing=true;
-  document.getElementById('playI').className='ti ti-player-pause';
-  loopProg();
-}
-
-function loopProg(){updProg();if(playing)raf=requestAnimationFrame(loopProg);}
+function loopP(){updProg();raf=requestAnimationFrame(loopP);}
 
 function updProg(){
-  if(!decodedBuf)return;
-  const dur=decodedBuf.duration/spd;
-  const cur=playing?(actx.currentTime-startTime):playPos;
-  const safe=Math.max(0,Math.min(cur,dur));
-  document.getElementById('pf').style.width=(dur>0?(safe/dur)*100:0)+'%';
-  document.getElementById('curT').textContent=fmt(safe);
-  document.getElementById('durT').textContent=fmt(dur);
+  if(!aud)return;
+  const c=aud.currentTime,d=aud.duration||0;
+  document.getElementById('pf').style.width=(d>0?(c/d)*100:0)+'%';
+  document.getElementById('curT').textContent=fmt(c);
+  document.getElementById('durT').textContent=fmt(d);
 }
 
 function seek(e){
-  if(!decodedBuf)return;
+  if(!aud||!aud.duration)return;
   const r=e.currentTarget.getBoundingClientRect();
-  const ratio=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
-  const newPos=ratio*(decodedBuf.duration/spd);
-  if(playing){stopPlay();startPlay(newPos);}
-  else{playPos=newPos;updProg();}
+  aud.currentTime=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*aud.duration;
 }
 
 function onSpd(v){
   spd=parseFloat(v);
   document.getElementById('sN').textContent=spd.toFixed(2);
   document.getElementById('sTag').textContent=tl(spd);
-  if(playing){const p=actx.currentTime-startTime;stopPlay();startPlay(p);}
-  else updProgStatic();
+  if(aud)applySpeed(aud);
   document.querySelectorAll('.pre').forEach(b=>b.classList.remove('on'));
   [1.0,1.70,2.0,2.5].forEach((p,i)=>{if(Math.abs(spd-p)<0.01)document.querySelectorAll('.pre')[i].classList.add('on');});
 }
@@ -272,11 +222,20 @@ async function doShare(){
   if(!decodedBuf)return;
   const btn=document.getElementById('shareBtn');
   const txt=document.getElementById('shareTxt');
+  const wrap=document.getElementById('procWrap');
+  const fill=document.getElementById('procFill');
+  const hint=document.getElementById('hint');
+
   btn.disabled=true;
   txt.textContent='מעבד...';
+  wrap.classList.remove('hidden');
+  fill.style.width='0%';
 
-  const wav=await stretchToWav(decodedBuf,spd);
+  const wav=await timeStretchChunked(decodedBuf,spd,(pct)=>{
+    fill.style.width=pct+'%';
+  });
 
+  wrap.classList.add('hidden');
   btn.disabled=false;
   txt.textContent='שתף הודעה קולית';
 
@@ -284,7 +243,7 @@ async function doShare(){
   if(navigator.share){
     try{
       await navigator.share({files:[file],title:'הודעה קולית של לינוי'});
-      document.getElementById('hint').textContent='שותף בהצלחה!';
+      hint.textContent='שותף בהצלחה!';
       return;
     }catch(e){if(e.name==='AbortError')return;}
   }
@@ -292,59 +251,54 @@ async function doShare(){
   a.href=URL.createObjectURL(wav);
   a.download='linoy_voice.wav';
   document.body.appendChild(a);a.click();a.remove();
-  document.getElementById('hint').textContent='הורד — פתח ווטסאפ וצרף';
+  hint.textContent='הורד — פתח ווטסאפ וצרף';
 }
 
-async function stretchToWav(buf,tempo){
-  return new Promise(resolve=>{
-    const sr=buf.sampleRate;
-    const nc=buf.numberOfChannels;
-    const ns=buf.length;
-    const channels=[];
-    for(let c=0;c<nc;c++) channels.push(buf.getChannelData(c));
+async function timeStretchChunked(buf,tempo,onProgress){
+  const sr=buf.sampleRate;
+  const nc=buf.numberOfChannels;
+  const ns=buf.length;
+  const CHUNK=8192;
+  const outL=[];
+  const outR=[];
 
-    const st=new SoundTouch();
-    st.tempo=tempo;
-    st.pitch=1.0;
+  const ch0=buf.getChannelData(0);
+  const ch1=nc>1?buf.getChannelData(1):ch0;
 
-    let pos=0;
-    const filter=new SimpleFilter({
-      extract(target,numFrames){
-        if(pos>=ns)return 0;
-        const n=Math.min(numFrames,ns-pos);
-        for(let i=0;i<n;i++){
-          target[i*2]=channels[0][pos+i];
-          target[i*2+1]=(nc>1?channels[1]:channels[0])[pos+i];
-        }
-        pos+=n;return n;
-      }
-    },st);
+  const newLen=Math.ceil(ns/tempo);
+  let inPos=0;
+  let outPos=0;
+  let lastYield=Date.now();
 
-    const outL=[],outR=[];
-    const chunk=4096;
-    const tmp=new Float32Array(chunk*2);
-    let got;
-    while((got=filter.extract(tmp,chunk))>0){
-      for(let i=0;i<got;i++){outL.push(tmp[i*2]);outR.push(tmp[i*2+1]);}
+  while(outPos<newLen){
+    const srcIdx=Math.floor(outPos*tempo);
+    const end=Math.min(outPos+CHUNK,newLen);
+    for(let i=outPos;i<end;i++){
+      const si=Math.floor(i*tempo);
+      const si2=Math.min(si+1,ns-1);
+      const frac=(i*tempo)-si;
+      outL.push(ch0[si]*(1-frac)+ch0[si2]*frac);
+      outR.push(ch1[si]*(1-frac)+ch1[si2]*frac);
     }
+    outPos=end;
+    onProgress(Math.round((outPos/newLen)*100));
+    if(Date.now()-lastYield>16){await yield_();lastYield=Date.now();}
+  }
 
-    const outNs=outL.length;
-    const bl=2*2,ds=outNs*bl;
-    const ab=new ArrayBuffer(44+ds),v=new DataView(ab);
-    const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
-    ws(0,'RIFF');v.setUint32(4,36+ds,true);ws(8,'WAVE');ws(12,'fmt ');
-    v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,2,true);
-    v.setUint32(24,sr,true);v.setUint32(28,sr*bl,true);
-    v.setUint16(32,bl,true);v.setUint16(34,16,true);
-    ws(36,'data');v.setUint32(40,ds,true);
-    let off=44;
-    for(let i=0;i<outNs;i++){
-      const l=Math.max(-1,Math.min(1,outL[i]));
-      const r=Math.max(-1,Math.min(1,outR[i]));
-      v.setInt16(off,l<0?l*0x8000:l*0x7FFF,true);off+=2;
-      v.setInt16(off,r<0?r*0x8000:r*0x7FFF,true);off+=2;
-    }
-    resolve(new Blob([ab],{type:'audio/wav'}));
-  });
+  const outNs=outL.length;
+  const bl=4,ds=outNs*bl*2;
+  const ab=new ArrayBuffer(44+ds),v=new DataView(ab);
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
+  ws(0,'RIFF');v.setUint32(4,36+ds,true);ws(8,'WAVE');ws(12,'fmt ');
+  v.setUint32(16,16,true);v.setUint16(20,3,true);v.setUint16(22,2,true);
+  v.setUint32(24,sr,true);v.setUint32(28,sr*bl*2,true);
+  v.setUint16(32,bl*2,true);v.setUint16(34,32,true);
+  ws(36,'data');v.setUint32(40,ds,true);
+  let off=44;
+  for(let i=0;i<outNs;i++){
+    v.setFloat32(off,Math.max(-1,Math.min(1,outL[i])),true);off+=4;
+    v.setFloat32(off,Math.max(-1,Math.min(1,outR[i])),true);off+=4;
+  }
+  return new Blob([ab],{type:'audio/wav'});
 }
 </script>
