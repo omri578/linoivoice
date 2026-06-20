@@ -11,6 +11,7 @@
 .hero small{font-size:13px;color:rgba(255,255,255,0.45)}
 .pill{display:inline-flex;align-items:center;gap:6px;margin-top:14px;padding:6px 16px;border-radius:20px;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.12);font-size:13px;color:rgba(255,255,255,0.55)}
 .pill.rec{background:rgba(226,75,74,0.18);border-color:rgba(226,75,74,0.35);color:#F7C1C1}
+.pill.cap{background:rgba(186,117,23,0.25);border-color:rgba(186,117,23,0.4);color:#FAC775}
 .pill.done{background:rgba(29,158,117,0.18);border-color:rgba(29,158,117,0.35);color:#9FE1CB}
 .blink{width:7px;height:7px;border-radius:50%;background:currentColor;animation:bl 1s infinite;flex-shrink:0}
 @keyframes bl{0%,100%{opacity:1}50%{opacity:.1}}
@@ -20,6 +21,7 @@
 .big-btn{width:100%;padding:18px;font-size:16px;font-weight:500;border-radius:12px;border:0.5px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;min-height:56px}
 .big-btn:active{transform:scale(0.97)}
 .big-btn.rec{background:rgba(226,75,74,0.2);border-color:rgba(226,75,74,0.4);color:#F7C1C1}
+.big-btn:disabled{opacity:.35;cursor:default}
 .timer{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:14px;color:#F09595;font-weight:500}
 .spd-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .spd-big{font-size:32px;font-weight:500;color:#CECBF6;line-height:1}
@@ -50,7 +52,7 @@ input[type=range]{width:100%;accent-color:#7F77DD;cursor:pointer}
   <div class="hero">
     <div class="avatar" id="av"><i class="ti ti-microphone" id="avI" aria-hidden="true"></i></div>
     <h1>הקול של לינוי</h1>
-    <small>מהיר · קול רגיל · שיתוף עם speed</small>
+    <small>מהיר · קול רגיל · שיתוף מדויק</small>
     <div><span class="pill" id="pill"><span id="pillTxt">מוכן להקלטה</span></span></div>
   </div>
   <div class="body">
@@ -96,14 +98,14 @@ input[type=range]{width:100%;accent-color:#7F77DD;cursor:pointer}
         <i class="ti ti-share" style="font-size:20px" aria-hidden="true"></i>
         <span id="shareTxt">שתף הודעה קולית</span>
       </button>
-      <p class="hint" id="hint">הקובץ יישלח עם המהירות שבחרת</p>
+      <p class="hint" id="hint">הקובץ ישמע בדיוק כמו כאן</p>
     </div>
 
   </div>
 </div>
 
 <script>
-let mr,ch=[],rawBlob=null,decodedBuf=null,spd=1.70,sec=0,tk=null,aud=null,raf=null;
+let mr,ch=[],rawBlob=null,wavBlob=null,spd=1.70,sec=0,tk=null,aud=null,raf=null,actx=null,capChunks=[],capMr=null;
 
 const tl=s=>s<0.8?'איטי מאוד':s<1?'איטי':s===1?'רגיל':s<1.5?'מהיר קצת':s<2?'מהיר':s<2.5?'מהיר מאוד':'טורבו';
 const fmt=s=>{if(!isFinite(s)||s<0)return'0:00';return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');};
@@ -112,7 +114,7 @@ function setPill(t,cls){
   const p=document.getElementById('pill');
   p.className='pill'+(cls?' '+cls:'');
   const d=p.querySelector('.blink');
-  if(cls==='rec'){if(!d){const x=document.createElement('div');x.className='blink';p.prepend(x);}}
+  if(cls==='rec'||cls==='cap'){if(!d){const x=document.createElement('div');x.className='blink';p.prepend(x);}}
   else if(d)d.remove();
   document.getElementById('pillTxt').textContent=t;
 }
@@ -153,9 +155,6 @@ function tick(){document.getElementById('tv').textContent=fmt(sec);sec++;}
 async function onStop(){
   rawBlob=new Blob(ch,{type:'audio/webm'});
   await new Promise(r=>setTimeout(r,300));
-  const ctx=new(window.AudioContext||window.webkitAudioContext)();
-  const ab=await rawBlob.arrayBuffer();
-  decodedBuf=await ctx.decodeAudioData(ab);
   buildPlayer();
   document.getElementById('spdCard').classList.remove('hidden');
   document.getElementById('shareCard').classList.remove('hidden');
@@ -163,18 +162,23 @@ async function onStop(){
 }
 
 function buildPlayer(){
-  if(aud){aud.pause();aud.src='';aud.remove();}
-  const wav=renderWav(decodedBuf,1.0);
+  if(aud){aud.pause();try{aud.remove();}catch(e){}}
+  const url=URL.createObjectURL(rawBlob);
   aud=document.createElement('audio');
-  aud.src=URL.createObjectURL(wav);
+  aud.src=url;
   aud.preload='metadata';
-  aud.playbackRate=spd;
-  if('preservesPitch' in aud)aud.preservesPitch=true;
-  else if('webkitPreservesPitch' in aud)aud.webkitPreservesPitch=true;
+  applySpeed(aud);
   document.body.appendChild(aud);
   aud.addEventListener('timeupdate',updProg);
   aud.addEventListener('loadedmetadata',updProg);
   aud.addEventListener('ended',()=>{cancelAnimationFrame(raf);document.getElementById('playI').className='ti ti-player-play';});
+}
+
+function applySpeed(el){
+  el.playbackRate=spd;
+  if('preservesPitch' in el)el.preservesPitch=true;
+  else if('mozPreservesPitch' in el)el.mozPreservesPitch=true;
+  else if('webkitPreservesPitch' in el)el.webkitPreservesPitch=true;
 }
 
 function togglePlay(){
@@ -189,8 +193,8 @@ function updProg(){
   if(!aud)return;
   const c=aud.currentTime,d=aud.duration||0;
   document.getElementById('pf').style.width=(d>0?(c/d)*100:0)+'%';
-  document.getElementById('curT').textContent=fmt(c/spd);
-  document.getElementById('durT').textContent=fmt(d/spd);
+  document.getElementById('curT').textContent=fmt(c);
+  document.getElementById('durT').textContent=fmt(d);
 }
 
 function seek(e){
@@ -203,11 +207,8 @@ function onSpd(v){
   spd=parseFloat(v);
   document.getElementById('sN').textContent=spd.toFixed(2);
   document.getElementById('sTag').textContent=tl(spd);
-  if(aud){
-    aud.playbackRate=spd;
-    if('preservesPitch' in aud)aud.preservesPitch=true;
-    else if('webkitPreservesPitch' in aud)aud.webkitPreservesPitch=true;
-  }
+  if(aud)applySpeed(aud);
+  wavBlob=null;
   document.querySelectorAll('.pre').forEach(b=>b.classList.remove('on'));
   [1.0,1.70,2.0,2.5].forEach((p,i)=>{if(Math.abs(spd-p)<0.01)document.querySelectorAll('.pre')[i].classList.add('on');});
 }
@@ -215,48 +216,86 @@ function onSpd(v){
 function setS(v){document.getElementById('sl').value=v;onSpd(v);}
 
 async function doShare(){
-  if(!decodedBuf)return;
+  if(!rawBlob)return;
   const btn=document.getElementById('shareBtn');
   const txt=document.getElementById('shareTxt');
+  const hint=document.getElementById('hint');
+
   btn.disabled=true;
   txt.textContent='מכין קובץ...';
+  setPill('מקליט פלט...','cap');
 
-  await new Promise(r=>setTimeout(r,50));
-
-  const ctx=new(window.AudioContext||window.webkitAudioContext)();
-  const sr=decodedBuf.sampleRate;
-  const origLen=decodedBuf.length;
-  const newLen=Math.ceil(origLen/spd);
-
-  const off=new OfflineAudioContext(decodedBuf.numberOfChannels,newLen,sr);
-  const src=off.createBufferSource();
-  src.buffer=decodedBuf;
-  src.playbackRate.value=spd;
-  src.connect(off.destination);
-  src.start(0);
-  const rendered=await off.startRendering();
-
-  const wav=renderWav(rendered,1.0);
-  const file=new File([wav],'linoy_voice.wav',{type:'audio/wav'});
+  try{
+    const captured=await captureOutput();
+    wavBlob=captured;
+  }catch(e){
+    btn.disabled=false;
+    txt.textContent='שתף הודעה קולית';
+    hint.textContent='שגיאה — נסה שוב';
+    setPill('מוכן לשליחה','done');
+    return;
+  }
 
   btn.disabled=false;
   txt.textContent='שתף הודעה קולית';
+  setPill('מוכן לשליחה','done');
 
+  const file=new File([wavBlob],'linoy_voice.wav',{type:'audio/wav'});
   if(navigator.share){
     try{
       await navigator.share({files:[file],title:'הודעה קולית של לינוי'});
-      document.getElementById('hint').textContent='שותף בהצלחה!';
+      hint.textContent='שותף בהצלחה!';
       return;
-    }catch(e){if(e.name==='AbortError')return;}
+    }catch(e){if(e.name==='AbortError'){hint.textContent='הקובץ ישמע בדיוק כמו כאן';return;}}
   }
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(wav);
+  a.href=URL.createObjectURL(wavBlob);
   a.download='linoy_voice.wav';
   document.body.appendChild(a);a.click();a.remove();
-  document.getElementById('hint').textContent='הורד — פתח ווטסאפ וצרף';
+  hint.textContent='הורד — פתח ווטסאפ וצרף';
 }
 
-function renderWav(buf,rate){
+function captureOutput(){
+  return new Promise(async(resolve,reject)=>{
+    try{
+      if(!actx||actx.state==='closed') actx=new(window.AudioContext||window.webkitAudioContext)();
+      if(actx.state==='suspended') await actx.resume();
+
+      const tmpAud=document.createElement('audio');
+      tmpAud.src=URL.createObjectURL(rawBlob);
+      tmpAud.crossOrigin='anonymous';
+      document.body.appendChild(tmpAud);
+      applySpeed(tmpAud);
+
+      const src=actx.createMediaElementSource(tmpAud);
+      const dest=actx.createMediaStreamDestination();
+      src.connect(dest);
+      src.connect(actx.destination);
+
+      capChunks=[];
+      const mr2=new MediaRecorder(dest.stream,{mimeType:MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/webm'});
+      mr2.ondataavailable=e=>{if(e.data.size>0)capChunks.push(e.data);};
+      mr2.onstop=async()=>{
+        try{
+          const blob=new Blob(capChunks,{type:'audio/webm'});
+          const ab=await blob.arrayBuffer();
+          const ctx2=new(window.AudioContext||window.webkitAudioContext)();
+          const decoded=await ctx2.decodeAudioData(ab);
+          resolve(bufToWav(decoded));
+        }catch(e){reject(e);}
+        tmpAud.remove();
+      };
+
+      mr2.start(100);
+      await tmpAud.play();
+
+      tmpAud.onended=()=>{mr2.stop();};
+      setTimeout(()=>{if(mr2.state==='recording'){tmpAud.pause();mr2.stop();}},((tmpAud.duration||60)/spd+2)*1000);
+    }catch(e){reject(e);}
+  });
+}
+
+function bufToWav(buf){
   const nc=buf.numberOfChannels,sr=buf.sampleRate,ns=buf.length,bl=nc*2,ds=ns*bl;
   const ab=new ArrayBuffer(44+ds),v=new DataView(ab);
   const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
